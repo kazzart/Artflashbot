@@ -1,4 +1,5 @@
 import os
+import glob
 from dotenv import load_dotenv
 
 import requests
@@ -15,6 +16,8 @@ if __name__ == "__main__":
     LOG_TOKEN: str | None = os.getenv('TELEGRAM_LOGGER_BOT_TOKEN')
     ADMIN_ID_STR: str | None = os.getenv('ADMIN_ID_STR')
     ADMIN_ID_STR_2: str | None = os.getenv('ADMIN_ID_STR_2')
+    ADMIN_ID_STR_3: str | None = os.getenv('ADMIN_ID_STR_3')
+    ADMIN_ID_STR_4: str | None = os.getenv('ADMIN_ID_STR_4')
     if TOKEN is None:
         raise NoEnvironmentVariable('No telegram bot token')
     if LOG_TOKEN is None:
@@ -23,10 +26,16 @@ if __name__ == "__main__":
         raise NoEnvironmentVariable('No admin id')
     if ADMIN_ID_STR_2 is None:
         raise NoEnvironmentVariable('No admin id')
+    if ADMIN_ID_STR_3 is None:
+        raise NoEnvironmentVariable('No admin id')
+    if ADMIN_ID_STR_4 is None:
+        raise NoEnvironmentVariable('No admin id')
 
     BASE_URL: str = 'https://bot.telegram.org'
     ADMIN_ID: int
     ADMIN_ID_2: int
+    ADMIN_ID_3: int
+    ADMIN_ID_4: int
     logger: TelegramLoggerBot
     exception_handler: MyExceptionHandler
     admins: set[int]
@@ -35,17 +44,23 @@ if __name__ == "__main__":
     intro: str
     welcome: str
     calendar_text: str
+    flag_1: bool
+    num_calendars: int
 
     ADMIN_ID = int(ADMIN_ID_STR)
     ADMIN_ID_2 = int(ADMIN_ID_STR_2)
+    ADMIN_ID_3 = int(ADMIN_ID_STR_3)
+    ADMIN_ID_4 = int(ADMIN_ID_STR_4)
     logger = TelegramLoggerBot(LOG_TOKEN, BASE_URL)
     exception_handler = MyExceptionHandler(ADMIN_ID, logger)
     intro = 'Добро пожаловать!'
     welcome = 'Это бот для присылания календаря'
     calendar_text = 'Подпись к календарю'
+    flag_1 = False
+    num_calendars = 0
 
-    admins = {ADMIN_ID, ADMIN_ID_2}
-    clients = {ADMIN_ID, ADMIN_ID_2}
+    admins = {ADMIN_ID, ADMIN_ID_2, ADMIN_ID_3, ADMIN_ID_4}
+    clients = {ADMIN_ID, ADMIN_ID_2, ADMIN_ID_3, ADMIN_ID_4}
 
     bot = telebot.TeleBot(TOKEN, exception_handler=exception_handler)
 
@@ -54,7 +69,6 @@ if __name__ == "__main__":
         idx: int = message.from_user.id
         if idx not in clients:
             clients.add(idx)
-            bot.send_message(idx, 'Ну привет)')
         else:
             bot.send_message(idx, 'Я тебя уже знаю')
         bot.send_message(idx, intro)
@@ -70,31 +84,49 @@ if __name__ == "__main__":
     def get_calendar(message: Message):
         try:
             bot.send_chat_action(message.chat.id, 'upload_photo')
-            with open('calendar.jpg', 'rb') as img:
-                bot.send_photo(message.chat.id, img, calendar_text,
-                               reply_to_message_id=message.message_id)
+            bot.send_media_group(message.chat.id, [telebot.types.InputMediaPhoto(
+                open(f'calendar_{1 + i}.jpg', 'rb')) for i, _ in enumerate(glob.glob("*.jpg"))])
+            bot.send_message(message.chat.id, calendar_text)
         except FileNotFoundError:
             bot.send_message(message.chat.id, 'Календарь не установлен')
 
+    @bot.message_handler(commands=['startsetcalendar'])
+    def start_set_calendar(message: Message):
+        global flag_1, num_calendars
+        flag_1 = True
+        for file in glob.glob("*.jpg"):
+            os.remove(file)
+        num_calendars = 0
+
+    @bot.message_handler(commands=['stopsetcalendar'])
+    def stop_set_calendar(message: Message):
+        global flag_1
+        idx: int = message.from_user.id
+        flag_1 = False
+        bot.send_message(idx, 'Введите подпись')
+        bot.register_next_step_handler_by_chat_id(
+            idx, handle_new_calendar)
+
     @bot.message_handler(content_types=['photo'])
     def add_calendar(message: Message):
+        global num_calendars
         idx: int = message.from_user.id
         if idx in admins and message.chat.type == 'private':
-            if message.photo is not None:
-                print('message.photo =', message.photo)
-                file_id = message.photo[-1].file_id
-                print('file_id =', file_id)
-                file_info = bot.get_file(file_id)
-                print('file.file_path =', file_info.file_path)
-                downloaded_file = bot.download_file(file_info.file_path)
+            if flag_1:
+                if message.photo is not None:
+                    print('message.photo =', message.photo)
+                    file_id = message.photo[-1].file_id
+                    print('file_id =', file_id)
+                    file_info = bot.get_file(file_id)
+                    print('file.file_path =', file_info.file_path)
+                    downloaded_file = bot.download_file(file_info.file_path)
 
-                with open("calendar.jpg", 'wb') as new_file:
-                    new_file.write(downloaded_file)
-                bot.send_message(idx, 'Введите подпись')
-                bot.register_next_step_handler_by_chat_id(
-                    idx, handle_new_calendar)
-            else:
-                raise NoPhoto('Can\'t set calendar')
+                    with open(f"calendar_{1 + num_calendars}.jpg", 'wb') as new_file:
+                        new_file.write(downloaded_file)
+
+                    num_calendars += 1
+                else:
+                    raise NoPhoto('Can\'t set calendar')
         elif message.chat.type == 'private':
             bot.send_message(idx,
                              'Только админ может менять календарь')
